@@ -1,0 +1,11 @@
+# Build
+build/
+
+# Geode
+*.geode
+
+# IDE
+.vscode/
+.idea/
+*.user
+CMakeSettings.json

@@ -1,0 +1,47 @@
+{
+	"geode": "4.4.1",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081"
+	},
+	"id": "tteth.hue-shift",
+	"name": "Hue Shift",
+	"version": "v1.0.0",
+	"developer": "tteth",
+	"description": "Shifts the hue of all level objects except icons and portals/speed portals.",
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Enabled",
+			"description": "Enable or disable the hue shift effect.",
+			"default": true
+		},
+		"hue-shift": {
+			"type": "float",
+			"name": "Hue Shift",
+			"description": "Amount of hue shift in degrees (0-360).",
+			"default": 30.0,
+			"min": 0.0,
+			"max": 360.0,
+			"control": {
+				"slider": true,
+				"arrows": true,
+				"arrow-step": 1.0,
+				"big-arrow-step": 15.0
+			}
+		},
+		"shift-bg": {
+			"type": "bool",
+			"name": "Shift Background",
+			"description": "Also shift the hue of the background color.",
+			"default": true
+		},
+		"shift-ground": {
+			"type": "bool",
+			"name": "Shift Ground",
+			"description": "Also shift the hue of the ground color.",
+			"default": true
+		}
+	}
+}
