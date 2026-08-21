@@ -2,6 +2,7 @@
 #include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
+#include <Geode/ui/Popup.hpp>
 
 using namespace geode::prelude;
 
@@ -58,12 +59,11 @@ static ccColor3B hsvToRgb(const HsvColor& hsv) {
 
 static ccColor3B shiftHue(const ccColor3B& color, float shiftDegrees) {
     if (shiftDegrees == 0.0f) return color;
-    // Don't shift pure black or pure white
     if (color.r == 0 && color.g == 0 && color.b == 0) return color;
     if (color.r == 255 && color.g == 255 && color.b == 255) return color;
 
     HsvColor hsv = rgbToHsv(color);
-    if (hsv.s < 0.01f) return color; // skip near-gray colors
+    if (hsv.s < 0.01f) return color;
 
     hsv.h = fmodf(hsv.h + shiftDegrees, 360.0f);
     if (hsv.h < 0.0f) hsv.h += 360.0f;
@@ -97,7 +97,6 @@ static bool isPortalOrSpeedPortal(GameObject* obj) {
             break;
     }
 
-    // Speed portals by object ID
     int objID = obj->m_objectID;
     if (objID == 200 || objID == 201 || objID == 202 || objID == 203 || objID == 1334) {
         return true;
@@ -114,11 +113,142 @@ static bool isEnabled() {
     return Mod::get()->getSettingValue<bool>("enabled");
 }
 
+// State for real-time color preview
+static bool s_bypassHook = false;
+static bool s_inUpdateColor = false;
+static std::unordered_map<GameObject*, ccColor3B> s_origObjColors;
+static std::unordered_map<GameObject*, ccColor3B> s_origChildColors;
+
+struct ChannelData {
+    ccColor3B color;
+    float fadeTime;
+    int colorID;
+    bool blending;
+    float opacity;
+    ccHSVValue copyHSV;
+    int colorIDToCopy;
+    bool copyOpacity;
+};
+static std::unordered_map<int, ChannelData> s_origChannels;
+
+static void refreshAllColors() {
+    auto gl = GJBaseGameLayer::get();
+    if (!gl) return;
+
+    float shift = getShift();
+    bool enabled = isEnabled();
+    bool shiftBg = Mod::get()->getSettingValue<bool>("shift-bg");
+    bool shiftGround = Mod::get()->getSettingValue<bool>("shift-ground");
+
+    // Refresh object colors from stored originals
+    s_bypassHook = true;
+    if (gl->m_objects) {
+        for (auto obj : CCArrayExt<GameObject*>(gl->m_objects)) {
+            bool skip = !enabled || isPortalOrSpeedPortal(obj);
+
+            auto it = s_origObjColors.find(obj);
+            if (it != s_origObjColors.end()) {
+                ccColor3B c = skip ? it->second : shiftHue(it->second, shift);
+                obj->setObjectColor(c);
+            }
+
+            auto it2 = s_origChildColors.find(obj);
+            if (it2 != s_origChildColors.end()) {
+                ccColor3B c = skip ? it2->second : shiftHue(it2->second, shift);
+                obj->setChildColor(c);
+            }
+        }
+    }
+
+    // Refresh color channels (BG, ground, etc.)
+    for (auto& [id, data] : s_origChannels) {
+        ccColor3B color = data.color;
+
+        if (enabled) {
+            bool isPlayerColor = (id == 1005 || id == 1006);
+            bool isBG = (id == 1000 || id == 1007);
+            bool isGround = (id == 1001 || id == 1009);
+
+            if (!isPlayerColor && !(isBG && !shiftBg) && !(isGround && !shiftGround)) {
+                color = shiftHue(color, shift);
+            }
+        }
+
+        ccHSVValue hsv = data.copyHSV;
+        gl->updateColor(color, data.fadeTime, data.colorID, data.blending,
+            data.opacity, hsv, data.colorIDToCopy, data.copyOpacity, nullptr, 0, 0);
+    }
+    s_bypassHook = false;
+}
+
+// Custom settings popup with real-time slider preview
+class HueSettingsPopup : public geode::Popup {
+protected:
+    Slider* m_hueSlider = nullptr;
+    CCLabelBMFont* m_valueLabel = nullptr;
+
+    void onSliderChanged(CCObject*) {
+        float value = m_hueSlider->getValue() * 360.0f;
+        value = std::clamp(value, 0.0f, 360.0f);
+
+        Mod::get()->setSettingValue<double>("hue-shift", static_cast<double>(value));
+        m_valueLabel->setString(fmt::format("{:.0f}", value).c_str());
+
+        refreshAllColors();
+    }
+
+public:
+    static HueSettingsPopup* create() {
+        auto ret = new HueSettingsPopup();
+        if (ret && ret->initPopup()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool initPopup() {
+        if (!Popup::init(300, 120)) return false;
+
+        this->setTitle("Hue Shift");
+
+        auto contentSize = m_mainLayer->getContentSize();
+        float centerX = contentSize.width / 2;
+        float centerY = contentSize.height / 2;
+
+        float currentValue = getShift();
+
+        m_valueLabel = CCLabelBMFont::create(
+            fmt::format("{:.0f}", currentValue).c_str(),
+            "bigFont.fnt"
+        );
+        m_valueLabel->setScale(0.5f);
+        m_valueLabel->setPosition({centerX, centerY + 15});
+        m_mainLayer->addChild(m_valueLabel);
+
+        m_hueSlider = Slider::create(this, menu_selector(HueSettingsPopup::onSliderChanged), 0.8f);
+        m_hueSlider->setValue(currentValue / 360.0f);
+        m_hueSlider->setPosition({centerX, centerY - 15});
+        m_mainLayer->addChild(m_hueSlider);
+
+        auto minLabel = CCLabelBMFont::create("0", "goldFont.fnt");
+        minLabel->setScale(0.4f);
+        minLabel->setPosition({centerX - 130, centerY - 15});
+        m_mainLayer->addChild(minLabel);
+
+        auto maxLabel = CCLabelBMFont::create("360", "goldFont.fnt");
+        maxLabel->setScale(0.4f);
+        maxLabel->setPosition({centerX + 130, centerY - 15});
+        m_mainLayer->addChild(maxLabel);
+
+        return true;
+    }
+};
+
 class $modify(HuePauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
-
-        auto winSize = CCDirector::sharedDirector()->getWinSize();
 
         auto sprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
         sprite->setScale(0.65f);
@@ -134,12 +264,25 @@ class $modify(HuePauseLayer, PauseLayer) {
     }
 
     void onHueSettings(CCObject*) {
-        geode::openSettingsPopup(Mod::get());
+        HueSettingsPopup::create()->show();
     }
 };
 
 class $modify(HueGameObject, GameObject) {
     void setObjectColor(cocos2d::ccColor3B const& color) {
+        if (s_bypassHook) {
+            GameObject::setObjectColor(color);
+            return;
+        }
+
+        // If called from updateColor, the color is already shifted — pass through
+        if (s_inUpdateColor) {
+            GameObject::setObjectColor(color);
+            return;
+        }
+
+        s_origObjColors[this] = color;
+
         if (!isEnabled() || isPortalOrSpeedPortal(this)) {
             GameObject::setObjectColor(color);
             return;
@@ -150,6 +293,18 @@ class $modify(HueGameObject, GameObject) {
     }
 
     void setChildColor(cocos2d::ccColor3B const& color) {
+        if (s_bypassHook) {
+            GameObject::setChildColor(color);
+            return;
+        }
+
+        if (s_inUpdateColor) {
+            GameObject::setChildColor(color);
+            return;
+        }
+
+        s_origChildColors[this] = color;
+
         if (!isEnabled() || isPortalOrSpeedPortal(this)) {
             GameObject::setChildColor(color);
             return;
@@ -174,38 +329,27 @@ class $modify(HueBaseGameLayer, GJBaseGameLayer) {
         int unk1,
         int unk2
     ) {
-        if (!isEnabled()) {
+        if (s_bypassHook) {
             GJBaseGameLayer::updateColor(color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
             return;
         }
 
-        float shift = getShift();
+        s_origChannels[colorID] = {color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity};
 
-        // Special color channel IDs:
-        // 1005 = Player Color 1, 1006 = Player Color 2 — always skip
-        // 1000 = BG, 1007 = LBG — skip if shift-bg is off
-        // 1001 = G1 (ground), 1009 = G2 (ground 2) — skip if shift-ground is off
+        bool shouldShift = isEnabled();
+        if (shouldShift) {
+            bool isPlayerColor = (colorID == 1005 || colorID == 1006);
+            bool isBG = (colorID == 1000 || colorID == 1007);
+            bool isGround = (colorID == 1001 || colorID == 1009);
 
-        bool isPlayerColor = (colorID == 1005 || colorID == 1006);
-        bool isBG = (colorID == 1000 || colorID == 1007);
-        bool isGround = (colorID == 1001 || colorID == 1009);
-
-        if (isPlayerColor) {
-            GJBaseGameLayer::updateColor(color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
-            return;
+            if (isPlayerColor) shouldShift = false;
+            else if (isBG && !Mod::get()->getSettingValue<bool>("shift-bg")) shouldShift = false;
+            else if (isGround && !Mod::get()->getSettingValue<bool>("shift-ground")) shouldShift = false;
         }
 
-        if (isBG && !Mod::get()->getSettingValue<bool>("shift-bg")) {
-            GJBaseGameLayer::updateColor(color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
-            return;
-        }
-
-        if (isGround && !Mod::get()->getSettingValue<bool>("shift-ground")) {
-            GJBaseGameLayer::updateColor(color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
-            return;
-        }
-
-        ccColor3B shifted = shiftHue(color, shift);
-        GJBaseGameLayer::updateColor(shifted, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
+        ccColor3B finalColor = shouldShift ? shiftHue(color, getShift()) : color;
+        s_inUpdateColor = true;
+        GJBaseGameLayer::updateColor(finalColor, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity, callerObject, unk1, unk2);
+        s_inUpdateColor = false;
     }
 };
