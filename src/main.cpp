@@ -1,15 +1,16 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 
 using namespace geode::prelude;
 
 // HSV/RGB conversion helpers
-struct HSV {
+struct HsvColor {
     float h, s, v;
 };
 
-static HSV rgbToHsv(const ccColor3B& c) {
+static HsvColor rgbToHsv(const ccColor3B& c) {
     float r = c.r / 255.0f;
     float g = c.g / 255.0f;
     float b = c.b / 255.0f;
@@ -18,7 +19,7 @@ static HSV rgbToHsv(const ccColor3B& c) {
     float minC = std::min({r, g, b});
     float delta = maxC - minC;
 
-    HSV hsv;
+    HsvColor hsv;
     hsv.v = maxC;
     hsv.s = (maxC == 0.0f) ? 0.0f : (delta / maxC);
 
@@ -35,7 +36,7 @@ static HSV rgbToHsv(const ccColor3B& c) {
     return hsv;
 }
 
-static ccColor3B hsvToRgb(const HSV& hsv) {
+static ccColor3B hsvToRgb(const HsvColor& hsv) {
     float c = hsv.v * hsv.s;
     float x = c * (1.0f - fabsf(fmodf(hsv.h / 60.0f, 2.0f) - 1.0f));
     float m = hsv.v - c;
@@ -61,7 +62,7 @@ static ccColor3B shiftHue(const ccColor3B& color, float shiftDegrees) {
     if (color.r == 0 && color.g == 0 && color.b == 0) return color;
     if (color.r == 255 && color.g == 255 && color.b == 255) return color;
 
-    HSV hsv = rgbToHsv(color);
+    HsvColor hsv = rgbToHsv(color);
     if (hsv.s < 0.01f) return color; // skip near-gray colors
 
     hsv.h = fmodf(hsv.h + shiftDegrees, 360.0f);
@@ -112,6 +113,30 @@ static float getShift() {
 static bool isEnabled() {
     return Mod::get()->getSettingValue<bool>("enabled");
 }
+
+class $modify(HuePauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+        auto sprite = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
+        sprite->setScale(0.65f);
+
+        auto btn = CCMenuItemSpriteExtra::create(
+            sprite, this, menu_selector(HuePauseLayer::onHueSettings)
+        );
+
+        auto menu = CCMenu::create();
+        menu->addChild(btn);
+        menu->setPosition({42.0f, 42.0f});
+        this->addChild(menu, 10);
+    }
+
+    void onHueSettings(CCObject*) {
+        geode::openSettingsPopup(Mod::get());
+    }
+};
 
 class $modify(HueGameObject, GameObject) {
     void setObjectColor(cocos2d::ccColor3B const& color) {
