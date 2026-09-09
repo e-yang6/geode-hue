@@ -1,6 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/ui/Popup.hpp>
 
@@ -105,8 +106,29 @@ static bool isPortalOrSpeedPortal(GameObject* obj) {
     return false;
 }
 
+// Per-level hue storage
+static int s_currentLevelID = 0;
+
+static std::string getLevelKey() {
+    return fmt::format("hue-level-{}", s_currentLevelID);
+}
+
 static float getShift() {
+    if (s_currentLevelID != 0) {
+        auto key = getLevelKey();
+        if (Mod::get()->hasSavedValue(key)) {
+            return static_cast<float>(Mod::get()->getSavedValue<double>(key));
+        }
+    }
     return static_cast<float>(Mod::get()->getSettingValue<double>("hue-shift"));
+}
+
+static void setShift(float value) {
+    if (s_currentLevelID != 0) {
+        Mod::get()->setSavedValue<double>(getLevelKey(), static_cast<double>(value));
+    } else {
+        Mod::get()->setSettingValue<double>("hue-shift", static_cast<double>(value));
+    }
 }
 
 static bool isEnabled() {
@@ -191,7 +213,7 @@ protected:
         float value = m_hueSlider->getValue() * 360.0f;
         value = std::clamp(value, 0.0f, 360.0f);
 
-        Mod::get()->setSettingValue<double>("hue-shift", static_cast<double>(value));
+        setShift(value);
         m_valueLabel->setString(fmt::format("{:.0f}", value).c_str());
 
         refreshAllColors();
@@ -243,6 +265,28 @@ public:
         m_mainLayer->addChild(maxLabel);
 
         return true;
+    }
+};
+
+class $modify(HuePlayLayer, PlayLayer) {
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        s_currentLevelID = level->m_levelID.value();
+
+        s_origObjColors.clear();
+        s_origChildColors.clear();
+        s_origChannels.clear();
+
+        bool result = PlayLayer::init(level, useReplay, dontCreateObjects);
+        return result;
+    }
+
+    void onQuit() {
+        s_currentLevelID = 0;
+        s_origObjColors.clear();
+        s_origChildColors.clear();
+        s_origChannels.clear();
+
+        PlayLayer::onQuit();
     }
 };
 
