@@ -31,6 +31,12 @@
 				"big-arrow-step": 15.0
 			}
 		},
+		"save-per-level": {
+			"type": "bool",
+			"name": "Save Per Level",
+			"description": "Save a separate hue shift for each level. New levels start at 0.",
+			"default": false
+		},
 		"shift-bg": {
 			"type": "bool",
 			"name": "Shift Background",

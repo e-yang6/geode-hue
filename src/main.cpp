@@ -113,18 +113,23 @@ static std::string getLevelKey() {
     return fmt::format("hue-level-{}", s_currentLevelID);
 }
 
+static bool isPerLevel() {
+    return Mod::get()->getSettingValue<bool>("save-per-level");
+}
+
 static float getShift() {
-    if (s_currentLevelID != 0) {
+    if (s_currentLevelID != 0 && isPerLevel()) {
         auto key = getLevelKey();
         if (Mod::get()->hasSavedValue(key)) {
             return static_cast<float>(Mod::get()->getSavedValue<double>(key));
         }
+        return 0.0f;
     }
     return static_cast<float>(Mod::get()->getSettingValue<double>("hue-shift"));
 }
 
 static void setShift(float value) {
-    if (s_currentLevelID != 0) {
+    if (s_currentLevelID != 0 && isPerLevel()) {
         Mod::get()->setSavedValue<double>(getLevelKey(), static_cast<double>(value));
     } else {
         Mod::get()->setSettingValue<double>("hue-shift", static_cast<double>(value));
@@ -144,7 +149,6 @@ static std::unordered_map<GameObject*, ccColor3B> s_origChildColors;
 struct ChannelData {
     ccColor3B color;
     float fadeTime;
-    int colorID;
     bool blending;
     float opacity;
     ccHSVValue copyHSV;
@@ -197,7 +201,7 @@ static void refreshAllColors() {
         }
 
         ccHSVValue hsv = data.copyHSV;
-        gl->updateColor(color, data.fadeTime, data.colorID, data.blending,
+        gl->updateColor(color, data.fadeTime, id, data.blending,
             data.opacity, hsv, data.colorIDToCopy, data.copyOpacity, nullptr, 0, 0);
     }
     s_bypassHook = false;
@@ -276,8 +280,7 @@ class $modify(HuePlayLayer, PlayLayer) {
         s_origChildColors.clear();
         s_origChannels.clear();
 
-        bool result = PlayLayer::init(level, useReplay, dontCreateObjects);
-        return result;
+        return PlayLayer::init(level, useReplay, dontCreateObjects);
     }
 
     void onQuit() {
@@ -314,13 +317,7 @@ class $modify(HuePauseLayer, PauseLayer) {
 
 class $modify(HueGameObject, GameObject) {
     void setObjectColor(cocos2d::ccColor3B const& color) {
-        if (s_bypassHook) {
-            GameObject::setObjectColor(color);
-            return;
-        }
-
-        // If called from updateColor, the color is already shifted — pass through
-        if (s_inUpdateColor) {
+        if (s_bypassHook || s_inUpdateColor) {
             GameObject::setObjectColor(color);
             return;
         }
@@ -337,12 +334,7 @@ class $modify(HueGameObject, GameObject) {
     }
 
     void setChildColor(cocos2d::ccColor3B const& color) {
-        if (s_bypassHook) {
-            GameObject::setChildColor(color);
-            return;
-        }
-
-        if (s_inUpdateColor) {
+        if (s_bypassHook || s_inUpdateColor) {
             GameObject::setChildColor(color);
             return;
         }
@@ -378,7 +370,7 @@ class $modify(HueBaseGameLayer, GJBaseGameLayer) {
             return;
         }
 
-        s_origChannels[colorID] = {color, fadeTime, colorID, blending, opacity, copyHSV, colorIDToCopy, copyOpacity};
+        s_origChannels[colorID] = {color, fadeTime, blending, opacity, copyHSV, colorIDToCopy, copyOpacity};
 
         bool shouldShift = isEnabled();
         if (shouldShift) {
